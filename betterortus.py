@@ -1,6 +1,5 @@
 # A Project for finding marks at ORTUS automatization
 # When it works:
-#   Script only works if ORTUS is in Latvian
 #   You have to give script valid username and password
 #
 # What it does:
@@ -12,6 +11,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import NoSuchElementException
 
 from typing import List, Tuple
 from collections import defaultdict
@@ -20,8 +20,29 @@ import getpass
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font
 
-CourseMap = defaultdict[str, List[Tuple[str, str]]]
-courseMap: CourseMap = defaultdict(list) # Global container which holds course name and its grades
+class Course:
+    def __init__(self, courseName: str):
+        self.courseName = courseName
+        self.marks = []
+
+    def addMark(self, title: str, value: str):
+        self.marks.append((title, value))
+
+    def getMarks(self):
+        return self.marks
+
+class CourseMap:
+    def __init__(self):
+        self.courses = []
+    
+    def addCourse(self, course: Course):
+        self.courses.append(course)
+    
+    def getCourses(self):
+        return self.courses
+
+
+courseMap = CourseMap()
 semesterName  = ""                       # What year courses we will collect // Exported to excel
 loginUsername = ""                       # To login in ortus
 loginPassword = ""                       # To login in ortus
@@ -55,7 +76,16 @@ def HandleWebSearch():
         return False
 
     # Find link to semester page and click on it
-    driver.find_element(By.ID, "portalNavigationTabGroupsList").find_element(By.XPATH, './/a[@title="Studentiem"]').click()
+    try: # Semester page is under "Studentiem"
+        student_page = driver.find_element(By.ID, "portalNavigationTabGroupsList").find_element(By.XPATH, './/a[@title="Studentiem"]')
+    except NoSuchElementException:  # If it wasnt found then ortus is in english, search for "For Students"
+        student_page = driver.find_element(By.ID, "portalNavigationTabGroupsList").find_element(By.XPATH, './/a[@title="For Students"]')
+
+    if student_page:
+        student_page.click()
+    else:
+        print("Failed to find Student page")
+        return False
 
     # This is where latest semester courses are at
     semesterCourses = driver.find_element(By.CLASS_NAME, "moodle-courses").find_elements(By.XPATH, './*')
@@ -68,6 +98,7 @@ def HandleWebSearch():
     # Iterate thru all courses
     for link in linksToCourses:
         courseName = link.text.strip()  # What course is it? // Exported to excel
+        course = Course(courseName)
         href       = link.get_attribute("href")
         print(f" - {courseName}: {href}") # where driver is going to
 
@@ -98,7 +129,7 @@ def HandleWebSearch():
                             continue
 
                     if markTitle != "":
-                        courseMap[courseName].append((markTitle, markValue))
+                        course.addMark(markTitle, markValue)
 
             except: # Happens because sometimes rows are randomly completely empty
                 print("### Could not read from table, invalid row design")
@@ -109,6 +140,8 @@ def HandleWebSearch():
             continue
 
         print(f"Got results in {courseName}")
+
+        courseMap.addCourse(course)
 
         driver.back()  # from marks page to course page
         driver.back()  # from course page to course list
@@ -137,11 +170,11 @@ def ExportToExcel():
         cell.font = Font(color="FFFFFF", bold=True)
 
     row = 2 # Start writing after header
-    for course, exercises in courseMap.items():
-        for exercise, grade in exercises:
-            ws.cell(row=row, column=1).value = course
-            ws.cell(row=row, column=2).value = exercise
-            ws.cell(row=row, column=3).value = grade
+    for course in courseMap.getCourses():
+        for title, value in course.getMarks():
+            ws.cell(row=row, column=1).value = course.courseName
+            ws.cell(row=row, column=2).value = title
+            ws.cell(row=row, column=3).value = value
             row += 1
         row += 1 # Between every course give one row gap
 
